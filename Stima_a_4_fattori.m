@@ -1,0 +1,93 @@
+load("./5Vpp.mat");
+
+clearvars -except signal_acq;
+close all;
+clc;
+
+
+%% Dati
+
+% Limit signal_acq length
+%signal_acq = signal_acq(1:2^14);
+
+% frequenza campionamento
+fs = 10^5;
+% Stima frequenza di partenza attraverso l'FFt del segnale acquisito (signal_acq)
+N = length(signal_acq);
+frequencies = (0:N-1)*(fs/N);
+fft_signal_acq = fft(signal_acq);
+magnitude_spectrum = abs(fft_signal_acq(1:N/2+1));
+[~, dominant_index] = max(magnitude_spectrum);
+f0 = frequencies(dominant_index); % valore iniziale di f0 basato sulla frequenza dominante
+
+% vettore tempo
+t_vector = 0:1/fs:(length(signal_acq)-1)/fs;
+
+%% Stima a 3 fattori iniziale basata sulla conoscenza di f0
+D0 = [cos(2*pi*f0*t_vector)', sin(2*pi*f0*t_vector)', ones(length(signal_acq),1)];
+
+s0 = D0\signal_acq;
+A0_est = s0(1);
+B0_est = s0(2);
+C0_est = s0(3);
+
+A_est = sqrt(A0_est^2 + B0_est^2);
+phi_est = atan2(B0_est, A0_est);
+
+signal_est_3params = A0_est*cos(2*pi*f0*t_vector) + B0_est*sin(2*pi*f0*t_vector) + C0_est;
+
+%% Stima a 4 fattori basata sulla conoscenza iniziale di A0 ,B0, C0 ed f0
+iterations = 5;
+fi = f0;
+delta_fi = 0;
+
+for i = 1:iterations
+    % Matrice osservazioni
+    Di = [cos(2*pi*fi*t_vector)', sin(2*pi*fi*t_vector)', ones(length(signal_acq),1), ...
+        (-A0_est*t_vector.*sin(2*pi*fi*t_vector)+B0_est*t_vector.*cos(2*pi*fi*t_vector))'];
+
+    % least squares
+    si = Di\signal_acq;
+    
+    % Aggiornamento parametri
+    A0_est = si(1);
+    B0_est = si(2);
+    C0_est = si(3);
+    delta_fi = si(4);
+    
+    % Aggiornamento della frequenza incrementando progressivamente il numero di cifre significatve 
+    fi = fi + delta_fi * 0.1;
+    % Calcolo errore
+    sig = Di * si;
+
+    % Il calcolo dell'errore con il metodo sotto genere una mole di dati
+    % maggiore rispetto a sqrt(sum((signal_acq - sig).^2));
+    %error = sqrt(sum((signal_acq - (A0_est*cos(2*pi*f0*t_vector) + B0_est*sin(2*pi*f0*t_vector) + C0_est )).^2));
+    error = sqrt(sum((signal_acq - sig).^2)); 
+
+end
+
+%display valori stimati
+disp(['Frequenza stimata: ', num2str(fi), ' Hz']);
+
+A_est = sqrt(A0_est^2 + B0_est^2);
+phi_est = atan2(B0_est, A0_est);
+
+signal_est_4params = A0_est*cos(2*pi*fi*t_vector) + B0_est*sin(2*pi*fi*t_vector) + C0_est;
+
+%% Plots
+figure(1);
+plot(t_vector, signal_acq, t_vector, signal_est_4params);
+xlim([0 0.1]);
+grid on;
+legend("acquired", "estimated 4 params");
+
+figure(2);
+plot(sig-signal_acq);
+grid on;
+legend("error");
+
+figure(3);
+plot(db(fft(sig-signal_acq)));
+grid on;
+legend("residual signal");
